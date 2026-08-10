@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+:root {
+  --background: #e8eef3;
+  --foreground: #14202b;
+  --surface: #ffffff;
+  --ink: #14202b;
+  --ink-soft: #243746;
+  --muted: #5d6b78;
+  --line: #d5dee7;
+  --track: #edf2f6;
+  --accent: #0f766e;
+  --accent-strong: #0b5f59;
+  --accent-soft: rgba(15, 118, 110, 0.16);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+body {
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(15, 118, 110, 0.12), transparent 55%),
+    radial-gradient(900px 420px at 100% 0%, rgba(36, 55, 70, 0.08), transparent 50%),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body), sans-serif;
+}
+
+.login-glow,
+.dashboard-glow {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(700px 280px at 20% 0%, rgba(15, 118, 110, 0.18), transparent 60%),
+    radial-gradient(600px 260px at 90% 10%, rgba(20, 32, 43, 0.08), transparent 55%);
+}
+
+.login-grid,
+.dashboard-grid {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(20, 32, 43, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 32, 43, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: rise 0.45s ease-out both;
+}
+
+.animate-rise-delay {
+  animation: rise 0.5s ease-out 0.08s both;
+}
+
+.animate-rise-delay-2 {
+  animation: rise 0.55s ease-out 0.16s both;
+}
