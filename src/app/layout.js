@@ -18,7 +18,7 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata = {
-  title: "Semak Otomasyon | Admin",
+  title: "Semak Shopier Otomasyon",
   description: "Semak ürün senkron ve admin paneli",
 };
 

@@ -38,27 +38,15 @@ export async function GET() {
     .from("products")
     .select("id", { count: "exact", head: true })
     .not("product_url", "is", null)
-    .is("price", null)
-    .is("price_synced_at", null);
+    .is("details_synced_at", null);
 
   if (pendingError) {
     return NextResponse.json({ error: pendingError.message }, { status: 500 });
   }
 
-  const { count: missingPrice, error: missingError } = await supabase
-    .from("products")
-    .select("id", { count: "exact", head: true })
-    .not("product_url", "is", null)
-    .is("price", null);
-
-  if (missingError) {
-    return NextResponse.json({ error: missingError.message }, { status: 500 });
-  }
-
   return NextResponse.json({
     total: total || 0,
     pending: pending || 0,
-    missingPrice: missingPrice || 0,
     batchSize: BATCH_SIZE,
   });
 }
@@ -71,6 +59,84 @@ export async function POST(request) {
 
   try {
     const body = await request.json().catch(() => ({}));
+    const productId = body?.productId || body?.id || null;
+
+    if (productId) {
+      const { data: product, error: productError } = await supabase
+        .from("products")
+        .select("id, smk_code, product_url, name")
+        .eq("id", productId)
+        .maybeSingle();
+
+      if (productError) {
+        return NextResponse.json(
+          { error: productError.message },
+          { status: 500 },
+        );
+      }
+
+      if (!product?.product_url) {
+        return NextResponse.json(
+          { error: "Ürün veya ürün URL’si bulunamadı" },
+          { status: 404 },
+        );
+      }
+
+      try {
+        const details = await fetchProductDetails(product.product_url);
+        const now = new Date().toISOString();
+        const payload = {
+          description: details.description_html || details.description_text,
+          specifications: details.specifications,
+          details_synced_at: now,
+          updated_at: now,
+        };
+
+        if (details.offer) {
+          payload.price = details.offer.price;
+          payload.currency = details.offer.currency || "TRY";
+          payload.price_synced_at = now;
+        }
+
+        const { data: updated, error: updateError } = await supabase
+          .from("products")
+          .update(payload)
+          .eq("id", product.id)
+          .select("*")
+          .single();
+
+        if (updateError) {
+          return NextResponse.json(
+            { error: updateError.message },
+            { status: 500 },
+          );
+        }
+
+        return NextResponse.json({
+          mode: "single",
+          processed: 1,
+          updated: 1,
+          failed: 0,
+          done: true,
+          product: updated,
+          results: [
+            {
+              id: product.id,
+              smk_code: product.smk_code,
+              updated: true,
+              specsCount: details.specifications?.length || 0,
+              hasDescription: Boolean(details.description_text),
+            },
+          ],
+        });
+      } catch (error) {
+        return NextResponse.json(
+          { error: error.message || "Detay sayfası okunamadı" },
+          { status: 500 },
+        );
+      }
+    }
+
     const mode = body?.mode === "all" ? "all" : "pending";
     const limit = Math.min(
       Math.max(Number(body?.limit) || BATCH_SIZE, 1),
@@ -86,7 +152,7 @@ export async function POST(request) {
       .limit(limit);
 
     if (mode === "pending") {
-      query = query.is("price", null).is("price_synced_at", null);
+      query = query.is("details_synced_at", null);
     } else {
       query = query.range(offset, offset + limit - 1);
     }
@@ -105,6 +171,7 @@ export async function POST(request) {
         failed: 0,
         done: true,
         nextOffset: offset,
+        pending: 0,
         errors: [],
         results: [],
       });
@@ -119,42 +186,22 @@ export async function POST(request) {
         const details = await fetchProductDetails(product.product_url);
         const now = new Date().toISOString();
 
-        if (!details.offer) {
-          const { error: markError } = await supabase
-            .from("products")
-            .update({
-              description: details.description_html || details.description_text,
-              specifications: details.specifications,
-              details_synced_at: now,
-              price_synced_at: now,
-              updated_at: now,
-            })
-            .eq("id", product.id);
+        const payload = {
+          description: details.description_html || details.description_text,
+          specifications: details.specifications,
+          details_synced_at: now,
+          updated_at: now,
+        };
 
-          errors.push({
-            smk_code: product.smk_code,
-            error: markError?.message || "JSON-LD offers.price bulunamadı",
-          });
-          results.push({
-            id: product.id,
-            smk_code: product.smk_code,
-            updated: false,
-          });
-          await sleep(120);
-          continue;
+        if (details.offer) {
+          payload.price = details.offer.price;
+          payload.currency = details.offer.currency || "TRY";
+          payload.price_synced_at = now;
         }
 
         const { error: updateError } = await supabase
           .from("products")
-          .update({
-            price: details.offer.price,
-            currency: details.offer.currency || "TRY",
-            price_synced_at: now,
-            description: details.description_html || details.description_text,
-            specifications: details.specifications,
-            details_synced_at: now,
-            updated_at: now,
-          })
+          .update(payload)
           .eq("id", product.id);
 
         if (updateError) {
@@ -172,9 +219,9 @@ export async function POST(request) {
           results.push({
             id: product.id,
             smk_code: product.smk_code,
-            price: details.offer.price,
-            currency: details.offer.currency,
             updated: true,
+            specsCount: details.specifications?.length || 0,
+            hasDescription: Boolean(details.description_text),
           });
         }
       } catch (error) {
@@ -196,8 +243,7 @@ export async function POST(request) {
       .from("products")
       .select("id", { count: "exact", head: true })
       .not("product_url", "is", null)
-      .is("price", null)
-      .is("price_synced_at", null);
+      .is("details_synced_at", null);
 
     const nextOffset = offset + products.length;
     const done =
@@ -218,7 +264,7 @@ export async function POST(request) {
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error.message || "Fiyat senkronu başarısız" },
+      { error: error.message || "Detay senkronu başarısız" },
       { status: 500 },
     );
   }

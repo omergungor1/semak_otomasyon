@@ -1,6 +1,8 @@
 import AdminShell from "@/components/admin-shell";
 import ProductList from "@/components/product-list";
 import SyncPanel from "@/components/sync-panel";
+import { getFxRates } from "@/lib/fx/convert";
+import { DEFAULT_PRICING_SETTINGS } from "@/lib/pricing/calculate";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function HomePage() {
@@ -14,8 +16,27 @@ export default async function HomePage() {
     .order("synced_at", { ascending: false })
     .order("name", { ascending: true });
 
+  const { data: pricingRows } = await supabase
+    .from("pricing_settings")
+    .select("*")
+    .eq("id", DEFAULT_PRICING_SETTINGS.id)
+    .limit(1);
+
+  const pricingSettings = pricingRows?.[0] || DEFAULT_PRICING_SETTINGS;
+
+  let fxRates = null;
+  let fxError = null;
+
+  try {
+    fxRates = await getFxRates();
+  } catch (err) {
+    fxError = err.message || "Kur servisi hatası";
+  }
+
   const list = products || [];
-  const withPrice = list.filter((item) => item.price !== null && item.price !== undefined).length;
+  const withPrice = list.filter(
+    (item) => item.price !== null && item.price !== undefined,
+  ).length;
   const lastSync = list[0]?.synced_at
     ? new Date(list[0].synced_at).toLocaleString("tr-TR")
     : "Henüz yok";
@@ -59,7 +80,12 @@ export default async function HomePage() {
             Ürünler yüklenemedi: {error.message}
           </p>
         ) : (
-          <ProductList products={list} />
+          <ProductList
+            products={list}
+            fxRates={fxRates}
+            fxError={fxError}
+            pricingSettings={pricingSettings}
+          />
         )}
       </div>
     </AdminShell>

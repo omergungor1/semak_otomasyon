@@ -3,6 +3,70 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+async function runDetailBatches({
+  mode = "pending",
+  setCurrent,
+  setTotal,
+  setSyncedCount,
+  setMessage,
+}) {
+  const metaResponse = await fetch("/api/sync/details");
+  const meta = await metaResponse.json();
+
+  if (!metaResponse.ok) {
+    throw new Error(meta.error || "Detay meta bilgisi alınamadı");
+  }
+
+  const targetTotal = mode === "all" ? meta.total : meta.pending;
+  setTotal(targetTotal);
+
+  if (targetTotal === 0) {
+    setMessage(
+      mode === "all"
+        ? "Detay çekilecek ürün yok."
+        : "Eksik açıklama/özellik kalmadı.",
+    );
+    return { updated: 0, processed: 0 };
+  }
+
+  setMessage(`${targetTotal} ürünün açıklama ve teknik özellikleri çekiliyor...`);
+
+  let processed = 0;
+  let updated = 0;
+  let offset = 0;
+  let done = false;
+
+  while (!done) {
+    const response = await fetch("/api/sync/details", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, offset, limit: meta.batchSize || 5 }),
+    });
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(result.error || "Detay senkronu başarısız");
+    }
+
+    processed += result.processed || 0;
+    updated += result.updated || 0;
+    offset = result.nextOffset ?? offset + (result.processed || 0);
+    done = Boolean(result.done) || (result.processed || 0) === 0;
+
+    setCurrent(Math.min(processed, targetTotal));
+    setSyncedCount(updated);
+    setMessage(
+      `Detay: ${Math.min(processed, targetTotal)}/${targetTotal} tarandı, ${updated} güncellendi...`,
+    );
+
+    if (mode === "pending" && (result.pending || 0) === 0) {
+      done = true;
+    }
+  }
+
+  return { updated, processed };
+}
+
 export default function SyncPanel() {
   const router = useRouter();
   const [running, setRunning] = useState(false);
@@ -59,8 +123,21 @@ export default function SyncPanel() {
         setSyncedCount(totalUpserted);
       }
 
+      setPhase("details");
       setMessage(
-        `Ürün listesi tamamlandı. ${totalUpserted} kayıt işlendi. Fiyat için “Fiyatları çek” kullanın.`,
+        `Liste tamamlandı (${totalUpserted}). Açıklama ve teknik özellikler çekiliyor...`,
+      );
+
+      const detailsResult = await runDetailBatches({
+        mode: "pending",
+        setCurrent,
+        setTotal,
+        setSyncedCount,
+        setMessage,
+      });
+
+      setMessage(
+        `Tamamlandı. Liste: ${totalUpserted} ürün · Detay: ${detailsResult.updated} ürün güncellendi.`,
       );
       router.refresh();
     } catch (err) {
@@ -166,6 +243,88 @@ export default function SyncPanel() {
     }
   }
 
+  async function handleShopierSync() {
+    setRunning(true);
+    setPhase("shopier");
+    setError("");
+    setMessage("Shopier kuyruğu hazırlanıyor...");
+    setCurrent(0);
+    setTotal(0);
+    setSyncedCount(0);
+
+    try {
+      const metaResponse = await fetch("/api/shopier/sync");
+      const meta = await metaResponse.json();
+
+      if (!metaResponse.ok) {
+        throw new Error(meta.error || "Shopier meta bilgisi alınamadı");
+      }
+
+      const targetTotal = meta.total || 0;
+      setTotal(targetTotal);
+
+      if (targetTotal === 0) {
+        setMessage("Shopier’e aktarılacak ürün yok.");
+        return;
+      }
+
+      setMessage(
+        `${targetTotal} ürün Shopier’e aktarılacak (mevcutsa güncellenecek)...`,
+      );
+
+      let processed = 0;
+      let synced = 0;
+      let offset = 0;
+      let done = false;
+      const failedSamples = [];
+
+      while (!done) {
+        const response = await fetch("/api/shopier/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ offset, limit: meta.batchSize || 3 }),
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.error || "Shopier senkronu başarısız");
+        }
+
+        processed += result.processed || 0;
+        synced += result.synced || 0;
+        offset = result.nextOffset ?? offset + (result.processed || 0);
+        done = Boolean(result.done) || (result.processed || 0) === 0;
+
+        setCurrent(Math.min(processed, targetTotal));
+        setSyncedCount(synced);
+        setMessage(
+          `Shopier: ${Math.min(processed, targetTotal)}/${targetTotal} işlendi, ${synced} senkronize...`,
+        );
+
+        if (result.errors?.length) {
+          failedSamples.push(...result.errors.slice(0, 3));
+        }
+      }
+
+      const failNote = failedSamples.length
+        ? ` Bazı hatalar: ${failedSamples
+            .map((item) => `${item.smk_code} (${item.error})`)
+            .join("; ")}`
+        : "";
+
+      setMessage(
+        `Shopier senkronu tamamlandı. ${synced} ürün güncellendi/eklendi.${failNote}`,
+      );
+      router.refresh();
+    } catch (err) {
+      setError(err.message || "Shopier senkronizasyon hatası");
+      setMessage("");
+    } finally {
+      setRunning(false);
+      setPhase("");
+    }
+  }
+
   return (
     <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-[0_10px_30px_rgba(15,23,32,0.04)] sm:p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -174,10 +333,11 @@ export default function SyncPanel() {
             Semak senkronizasyonu
           </h2>
           <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-            Önce liste sayfalarından ürünleri çekin. Sonra her ürünün detay
-            sayfasındaki JSON-LD <code className="text-[var(--ink)]">offers.price</code>{" "}
-            ve <code className="text-[var(--ink)]">priceCurrency</code> alanlarını
-            tek tek tarayın.
+            Ürün senkronu önce listeyi, sonra detay sayfalarından açıklama ve
+            teknik özellikleri çeker. Fiyat butonu JSON-LD{" "}
+            <code className="text-[var(--ink)]">offers.price</code> alanını
+            tarar. Shopier butonu ürünleri mağazaya ekler veya günceller;
+            pasif ürünler stok 0 ile yayın dışı kalır.
           </p>
         </div>
 
@@ -188,8 +348,10 @@ export default function SyncPanel() {
             disabled={running}
             className="inline-flex items-center justify-center rounded-xl bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-70"
           >
-            {running && phase === "products"
-              ? "Ürünler çekiliyor..."
+            {running && (phase === "products" || phase === "details")
+              ? phase === "details"
+                ? "Detaylar çekiliyor..."
+                : "Ürünler çekiliyor..."
               : "Ürünleri senkronize et"}
           </button>
 
@@ -214,6 +376,17 @@ export default function SyncPanel() {
             />
             Fiyatı olanları da yeniden çek
           </label>
+
+          <button
+            type="button"
+            onClick={handleShopierSync}
+            disabled={running}
+            className="inline-flex items-center justify-center rounded-xl border border-[var(--accent)] bg-[var(--accent)]/10 px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/20 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {running && phase === "shopier"
+              ? "Shopier senkronize ediliyor..."
+              : "Shopier senkronize et"}
+          </button>
         </div>
       </div>
 
@@ -221,7 +394,7 @@ export default function SyncPanel() {
         <div className="mb-2 flex items-center justify-between text-xs font-medium text-[var(--muted)]">
           <span>
             {total > 0
-              ? `${phase === "prices" ? "Ürün" : "Sayfa"} ${Math.min(current, total)} / ${total}`
+              ? `${phase === "products" ? "Sayfa" : "Ürün"} ${Math.min(current, total)} / ${total}`
               : "Hazır"}
           </span>
           <span>{progress}%</span>

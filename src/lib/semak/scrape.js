@@ -137,6 +137,7 @@ export function parseProductOfferFromJsonLd(html) {
         sku: node.sku || null,
         name: node.name || null,
         availability: offers.availability || null,
+        description: typeof node.description === "string" ? node.description : null,
       };
     }
   }
@@ -144,7 +145,84 @@ export function parseProductOfferFromJsonLd(html) {
   return null;
 }
 
-export async function fetchProductOffer(productUrl) {
+export function parseProductDescription(html) {
+  const $ = cheerio.load(html);
+  const $detail = $("#detail");
+
+  if ($detail.length) {
+    const htmlContent = ($detail.html() || "").trim();
+    const textContent = $detail.text().replace(/\s+/g, " ").trim();
+    if (htmlContent && textContent) {
+      return {
+        description_html: htmlContent,
+        description_text: textContent,
+      };
+    }
+  }
+
+  const offer = parseProductOfferFromJsonLd(html);
+  if (offer?.description) {
+    return {
+      description_html: `<p>${offer.description}</p>`,
+      description_text: offer.description.replace(/\s+/g, " ").trim(),
+    };
+  }
+
+  return {
+    description_html: null,
+    description_text: null,
+  };
+}
+
+export function parseProductSpecifications(html) {
+  const $ = cheerio.load(html);
+  const specs = [];
+
+  $(".product-spec-table tr, table tr").each((_, tr) => {
+    const cells = $(tr).find("td");
+    if (cells.length < 2) return;
+
+    const key = $(cells[0])
+      .text()
+      .replace(/\s+/g, " ")
+      .replace(/:\s*$/, "")
+      .trim();
+    const value = $(cells[1]).text().replace(/\s+/g, " ").trim();
+
+    if (!key) return;
+    specs.push({ key, value });
+  });
+
+  return specs;
+}
+
+function specsUrlFromProductUrl(productUrl) {
+  const url = String(productUrl || "").replace(/\/$/, "");
+  return `${url}/specs`;
+}
+
+export async function fetchProductDetails(productUrl) {
   const html = await fetchSemakDetailPage(productUrl);
-  return parseProductOfferFromJsonLd(html);
+  const offer = parseProductOfferFromJsonLd(html);
+  const description = parseProductDescription(html);
+
+  let specifications = [];
+  try {
+    const specsHtml = await fetchHtml(specsUrlFromProductUrl(productUrl));
+    specifications = parseProductSpecifications(specsHtml);
+  } catch {
+    specifications = parseProductSpecifications(html);
+  }
+
+  return {
+    offer,
+    description_html: description.description_html,
+    description_text: description.description_text,
+    specifications,
+  };
+}
+
+export async function fetchProductOffer(productUrl) {
+  const details = await fetchProductDetails(productUrl);
+  return details.offer;
 }
