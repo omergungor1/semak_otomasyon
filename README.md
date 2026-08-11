@@ -1,1 +1,1 @@
-Semak
+Semak Otomasyon
