@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -65,22 +66,6 @@ async function runDetailBatches({
   }
 
   return { updated, processed };
-}
-
-function ShopierIcon({ className = "" }) {
-  return (
-    <svg
-      viewBox="0 0 32 32"
-      className={className}
-      aria-hidden="true"
-    >
-      <rect width="32" height="32" rx="8" fill="#FF5A1F" />
-      <path
-        fill="#fff"
-        d="M9.2 10.4c0-1.7 1.4-3.1 3.1-3.1h7.4c1.7 0 3.1 1.4 3.1 3.1v1.1H9.2v-1.1Zm0 2.9h13.6v8.2c0 1.7-1.4 3.1-3.1 3.1h-7.4c-1.7 0-3.1-1.4-3.1-3.1v-8.2Zm4.2 2.2c-.5 0-.9.4-.9.9v3.2c0 .5.4.9.9.9s.9-.4.9-.9v-3.2c0-.5-.4-.9-.9-.9Zm5.2 0c-.5 0-.9.4-.9.9v3.2c0 .5.4.9.9.9s.9-.4.9-.9v-3.2c0-.5-.4-.9-.9-.9Z"
-      />
-    </svg>
-  );
 }
 
 export default function SyncPanel({ storeUrl = "" }) {
@@ -242,8 +227,8 @@ export default function SyncPanel({ storeUrl = "" }) {
 
       const failNote = failedSamples.length
         ? ` Bazı hatalar: ${failedSamples
-            .map((item) => `${item.smk_code} (${item.error})`)
-            .join("; ")}`
+          .map((item) => `${item.smk_code} (${item.error})`)
+          .join("; ")}`
         : "";
 
       setMessage(
@@ -324,8 +309,8 @@ export default function SyncPanel({ storeUrl = "" }) {
 
       const failNote = failedSamples.length
         ? ` Bazı hatalar: ${failedSamples
-            .map((item) => `${item.smk_code} (${item.error})`)
-            .join("; ")}`
+          .map((item) => `${item.smk_code} (${item.error})`)
+          .join("; ")}`
         : "";
 
       setMessage(
@@ -345,33 +330,30 @@ export default function SyncPanel({ storeUrl = "" }) {
     <section className="rounded-2xl border border-[var(--line)] bg-[var(--surface)] p-5 shadow-[0_10px_30px_rgba(15,23,32,0.04)] sm:p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold text-[var(--ink)]">
-              Semak senkronizasyonu
-            </h2>
-            {storeUrl ? (
-              <a
-                href={storeUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-xl border border-[#FF5A1F]/25 bg-[#FF5A1F]/10 px-3 py-1.5 text-sm font-semibold text-[#D64510] transition hover:border-[#FF5A1F]/50 hover:bg-[#FF5A1F]/15"
-                title="Shopier mağazasını aç"
-              >
-                <ShopierIcon className="h-6 w-6 shrink-0 shadow-sm" />
-                <span>Shopier mağaza</span>
-                <span aria-hidden="true" className="text-xs opacity-70">
-                  ↗
-                </span>
-              </a>
-            ) : null}
-          </div>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-            Ürün senkronu önce listeyi, sonra detay sayfalarından açıklama ve
-            teknik özellikleri çeker. Fiyat butonu JSON-LD{" "}
-            <code className="text-[var(--ink)]">offers.price</code> alanını
-            tarar. Shopier butonu ürünleri mağazaya ekler veya günceller;
-            pasif ürünler stok 0 ile yayın dışı kalır.
-          </p>
+          <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold text-[var(--ink)]">
+            Semak senkronizasyonu
+          </h2>
+          {storeUrl ? (
+            <a
+              href={storeUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-2.5 rounded-xl border border-[#6B21FF]/30 bg-[#6B21FF]/12 px-3.5 py-2 text-sm font-semibold text-[#5B18E0] transition hover:border-[#6B21FF]/55 hover:bg-[#6B21FF]/18"
+              title="Shopier mağazasını aç"
+            >
+              <Image
+                src="/shopier_logo.png"
+                alt="Shopier"
+                width={28}
+                height={28}
+                className="h-7 w-7 shrink-0 rounded-full"
+              />
+              <span>Shopier mağaza</span>
+              <span aria-hidden="true" className="text-xs opacity-70">
+                ↗
+              </span>
+            </a>
+          ) : null}
         </div>
 
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[220px]">
