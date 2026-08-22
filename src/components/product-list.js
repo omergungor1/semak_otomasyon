@@ -14,10 +14,11 @@ import ProductDetailsModal from "@/components/product-details-modal";
 
 const COLUMNS = [
   { key: "name", label: "Ürün Adı", className: "px-6 py-3" },
-  { key: "smk_code", label: "SMK", className: "px-4 py-3" },
-  { key: "material_code", label: "Malzeme", className: "px-4 py-3" },
   { key: "brand", label: "Marka", className: "px-4 py-3" },
+  { key: "category", label: "Kategori", className: "px-4 py-3" },
   { key: "price", label: "Semak Fiyat", className: "px-6 py-3" },
+  { key: "previous_price", label: "Eski Fiyat", className: "px-4 py-3" },
+  { key: "price_changed_at", label: "Fiyat değişimi", className: "px-4 py-3" },
   { key: "try", label: "TRY", className: "px-6 py-3" },
   { key: "sale", label: "Satış Fiyatı", className: "px-6 py-3" },
   { key: "is_active", label: "Aktif", className: "px-4 py-3" },
@@ -32,6 +33,8 @@ const FILTERS = [
   { key: "manual", label: "Manuel satış" },
   { key: "active", label: "Aktifler" },
   { key: "inactive", label: "Pasifler" },
+  { key: "shopify", label: "Shopify’da olanlar" },
+  { key: "no_shopify", label: "Shopify’da olmayanlar" },
 ];
 
 function compareText(a, b) {
@@ -50,6 +53,35 @@ function compareNumber(a, b) {
   if (bEmpty) return -1;
 
   return Number(a) - Number(b);
+}
+
+function compareDate(a, b) {
+  const aTime = a ? new Date(a).getTime() : NaN;
+  const bTime = b ? new Date(b).getTime() : NaN;
+  const aEmpty = Number.isNaN(aTime);
+  const bEmpty = Number.isNaN(bTime);
+
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1;
+  if (bEmpty) return -1;
+
+  return aTime - bTime;
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("tr-TR");
+}
+
+function categoryLabel(product) {
+  const category = product?.category;
+  if (!category) return "";
+  if (category.alt_kategori) {
+    return `${category.ana_kategori} / ${category.alt_kategori}`;
+  }
+  return category.ana_kategori || category.name || "";
 }
 
 function GearIcon({ className = "" }) {
@@ -129,6 +161,17 @@ function MoreIcon({ className = "" }) {
   );
 }
 
+async function syncProductToShopify(productId) {
+  const response = await fetch(`/api/shopify/products/${productId}`, {
+    method: "POST",
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error || "Shopify güncellemesi başarısız");
+  }
+  return result;
+}
+
 async function syncProductToShopier(productId) {
   const response = await fetch(`/api/shopier/products/${productId}`, {
     method: "POST",
@@ -190,6 +233,7 @@ export default function ProductList({
         product.smk_code,
         product.material_code,
         product.brand,
+        categoryLabel(product),
       ]
         .filter(Boolean)
         .join(" ")
@@ -222,6 +266,10 @@ export default function ProductList({
           return isActive;
         case "inactive":
           return !isActive;
+        case "shopify":
+          return Boolean(product.shopify_product_id);
+        case "no_shopify":
+          return !product.shopify_product_id;
         default:
           return true;
       }
@@ -244,8 +292,14 @@ export default function ProductList({
         result = compareText(a.material_code, b.material_code);
       } else if (sortKey === "brand") {
         result = compareText(a.brand, b.brand);
+      } else if (sortKey === "category") {
+        result = compareText(categoryLabel(a), categoryLabel(b));
       } else if (sortKey === "price") {
         result = compareNumber(a.price, b.price);
+      } else if (sortKey === "previous_price") {
+        result = compareNumber(a.previous_price, b.previous_price);
+      } else if (sortKey === "price_changed_at") {
+        result = compareDate(a.price_changed_at, b.price_changed_at);
       } else if (sortKey === "try") {
         result = compareNumber(getTryCost(a), getTryCost(b));
       } else if (sortKey === "sale") {
@@ -270,7 +324,13 @@ export default function ProductList({
 
     setSortKey(key);
     setSortDir(
-      key === "price" || key === "try" || key === "sale" ? "desc" : "asc",
+      key === "price" ||
+        key === "previous_price" ||
+        key === "price_changed_at" ||
+        key === "try" ||
+        key === "sale"
+        ? "desc"
+        : "asc",
     );
   }
 
@@ -310,17 +370,19 @@ export default function ProductList({
       return;
     }
 
-    patchProduct(data);
+    patchProduct({ ...product, ...data });
 
-    try {
-      const shopierResult = await syncProductToShopier(data.id);
-      if (shopierResult.product) {
-        patchProduct(shopierResult.product);
+    if (data.shopify_product_id || product.shopify_product_id) {
+      try {
+        const result = await syncProductToShopify(product.id);
+        if (result.product) {
+          patchProduct(result.product);
+        }
+      } catch (syncError) {
+        window.alert(
+          `Aktiflik kaydedildi ama Shopify güncellenemedi: ${syncError.message}`,
+        );
       }
-    } catch (shopierError) {
-      window.alert(
-        `Aktiflik kaydedildi ama Shopier güncellenemedi: ${shopierError.message}`,
-      );
     }
   }
 
@@ -350,6 +412,22 @@ export default function ProductList({
     }
   }
 
+  async function updateProductOnShopify(product) {
+    setRowBusyId(product.id);
+    setMenuOpenId(null);
+
+    try {
+      const result = await syncProductToShopify(product.id);
+      if (result.product) {
+        patchProduct(result.product);
+      }
+    } catch (error) {
+      window.alert(error.message || "Shopify güncellemesi başarısız");
+    } finally {
+      setRowBusyId(null);
+    }
+  }
+
   async function updateProductOnShopier(product) {
     setRowBusyId(product.id);
     setMenuOpenId(null);
@@ -370,13 +448,13 @@ export default function ProductList({
     patchProduct(updated);
 
     try {
-      const result = await syncProductToShopier(updated.id);
+      const result = await syncProductToShopify(updated.id);
       if (result.product) {
         patchProduct(result.product);
       }
     } catch (error) {
       window.alert(
-        `Fiyat kaydedildi ama Shopier güncellenemedi: ${error.message}`,
+        `Fiyat kaydedildi ama Shopify güncellenemedi: ${error.message}`,
       );
     }
   }
@@ -399,6 +477,19 @@ export default function ProductList({
             className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--track)] hover:text-[var(--accent)]"
             aria-label="Semak ürün sayfasını aç"
             title="Semak ürün sayfasını aç"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <ExternalLinkIcon className="h-3.5 w-3.5" />
+          </a>
+        ) : null}
+        {product.shopify_url ? (
+          <a
+            href={product.shopify_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[var(--muted)] transition hover:bg-[var(--track)] hover:text-[#5E8E3E]"
+            aria-label="Shopify ürün sayfasını aç"
+            title="Shopify ürün sayfasını aç"
             onClick={(event) => event.stopPropagation()}
           >
             <ExternalLinkIcon className="h-3.5 w-3.5" />
@@ -523,6 +614,27 @@ export default function ProductList({
               >
                 Ürün detayını tekrar çek
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={busy}
+                onClick={() => updateProductOnShopify(product)}
+                className="block w-full px-3 py-2 text-left text-sm text-[var(--ink)] transition hover:bg-[var(--track)] disabled:opacity-50"
+              >
+                Ürünü Shopify güncelle
+              </button>
+              {product.shopify_url ? (
+                <a
+                  href={product.shopify_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  role="menuitem"
+                  className="block px-3 py-2 text-sm text-[var(--muted)] transition hover:bg-[var(--track)] hover:text-[var(--ink)]"
+                  onClick={() => setMenuOpenId(null)}
+                >
+                  Shopify sayfasını aç
+                </a>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
@@ -664,9 +776,27 @@ export default function ProductList({
                   <p className="mt-0.5 font-[family-name:var(--font-mono)] text-xs text-[var(--muted)]">
                     Malzeme {product.material_code || "—"}
                   </p>
+                  {categoryLabel(product) ? (
+                    <p className="mt-0.5 text-xs text-[var(--muted)]">
+                      {categoryLabel(product)}
+                    </p>
+                  ) : null}
                   <p className="mt-2 text-sm font-medium text-[var(--ink)]">
                     {formatMoney(product.price, product.currency)}
                   </p>
+                  {product.previous_price !== null &&
+                    product.previous_price !== undefined ? (
+                    <p className="mt-0.5 text-xs text-[var(--muted)]">
+                      Eski {formatMoney(product.previous_price, product.currency)}
+                      {product.price_changed_at
+                        ? ` · ${formatDateTime(product.price_changed_at)}`
+                        : ""}
+                    </p>
+                  ) : product.price_changed_at ? (
+                    <p className="mt-0.5 text-xs text-[var(--muted)]">
+                      Fiyat değişimi {formatDateTime(product.price_changed_at)}
+                    </p>
+                  ) : null}
                   <p className="mt-0.5 text-sm font-semibold text-[var(--accent)]">
                     TRY{" "}
                     {getTryCost(product) === null
@@ -739,17 +869,20 @@ export default function ProductList({
                         <div className="min-w-0">{renderProductName(product)}</div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 font-[family-name:var(--font-mono)] text-[var(--ink)]">
-                      {product.smk_code}
-                    </td>
-                    <td className="px-4 py-3 font-[family-name:var(--font-mono)] text-[var(--muted)]">
-                      {product.material_code || "—"}
-                    </td>
                     <td className="px-4 py-3 text-[var(--muted)]">
                       {product.brand || "—"}
                     </td>
+                    <td className="px-4 py-3 text-[var(--muted)]">
+                      {categoryLabel(product) || "—"}
+                    </td>
                     <td className="px-6 py-3 font-medium text-[var(--ink)]">
                       {formatMoney(product.price, product.currency)}
+                    </td>
+                    <td className="px-4 py-3 text-[var(--muted)]">
+                      {formatMoney(product.previous_price, product.currency)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-xs text-[var(--muted)]">
+                      {formatDateTime(product.price_changed_at)}
                     </td>
                     <td className="px-6 py-3 font-semibold text-[var(--accent)]">
                       {getTryCost(product) === null

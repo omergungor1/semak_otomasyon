@@ -32,10 +32,31 @@ export default function ProductDetailsModal({
   const infoRows = [
     { label: "SMK", value: product.smk_code || "—" },
     { label: "Malzeme", value: product.material_code || "—" },
-    { label: "Marka", value: product.brand || "—" },
+    {
+      label: "Marka",
+      value: product.brand || "—",
+    },
+    {
+      label: "Kategori",
+      value: product.category
+        ? product.category.alt_kategori
+          ? `${product.category.ana_kategori} / ${product.category.alt_kategori}`
+          : product.category.ana_kategori || product.category.name
+        : "—",
+    },
     {
       label: "Alış fiyatı",
       value: formatMoney(product.price, product.currency),
+    },
+    {
+      label: "Eski fiyat",
+      value: formatMoney(product.previous_price, product.currency),
+    },
+    {
+      label: "Son fiyat değişimi",
+      value: product.price_changed_at
+        ? new Date(product.price_changed_at).toLocaleString("tr-TR")
+        : "—",
     },
     {
       label: "TRY karşılığı",
@@ -46,9 +67,18 @@ export default function ProductDetailsModal({
       value:
         salePrice === null
           ? "—"
-          : `${formatMoney(salePrice, "TRY")}${
-              saleSource === "manual" ? " (manuel)" : ""
-            }`,
+          : `${formatMoney(salePrice, "TRY")}${saleSource === "manual" ? " (manuel)" : ""
+          }`,
+    },
+    {
+      label: "Shopify",
+      value: product.shopify_url || product.shopify_product_id || "Henüz senkron değil",
+    },
+    {
+      label: "Shopify senkron",
+      value: product.shopify_synced_at
+        ? new Date(product.shopify_synced_at).toLocaleString("tr-TR")
+        : "—",
     },
   ];
 

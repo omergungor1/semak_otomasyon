@@ -12,7 +12,10 @@ export default async function HomePage() {
 
   const { data: products, error, count } = await supabase
     .from("products")
-    .select("*", { count: "exact" })
+    .select(
+      "*, category:shopify_categories(id, name, parent_id, ana_kategori, alt_kategori, shopify_collection_id, path_key)",
+      { count: "exact" },
+    )
     .order("synced_at", { ascending: false })
     .order("name", { ascending: true });
 
@@ -73,7 +76,17 @@ export default async function HomePage() {
           </article>
         </section>
 
-        <SyncPanel storeUrl={process.env.SHOPIER_STORE_LINK || ""} />
+        <SyncPanel
+          storeUrl={process.env.SHOPIER_STORE_LINK || ""}
+          shopifyStoreUrl={
+            process.env.SHOPIFY_SHOP
+              ? `https://${String(process.env.SHOPIFY_SHOP)
+                  .replace(/^https?:\/\//, "")
+                  .replace(/\/$/, "")
+                  .replace(/\.myshopify\.com$/i, "")}.myshopify.com/admin`
+              : ""
+          }
+        />
 
         {error ? (
           <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">

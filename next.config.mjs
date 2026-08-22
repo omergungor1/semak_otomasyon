@@ -9,6 +9,9 @@ const nextConfig = {
     root: __dirname,
   },
   images: {
+    // Vercel Image Optimization ücretli; ücretsiz planda /_next/image 402 döner.
+    // Spaces zaten CDN olduğu için tarayıcı görselleri doğrudan yükler.
+    unoptimized: true,
     remotePatterns: [
       {
         protocol: "https",

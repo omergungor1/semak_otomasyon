@@ -1,10 +1,72 @@
 import * as cheerio from "cheerio";
+import {
+  cleanCategoryLabel,
+  resolveCategoryFromBreadcrumb,
+} from "@/lib/categories/normalize";
 
 const LIST_URL =
   "https://www.semak.com.tr/Products?Type=Products&Stock=1";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+export class SemakPageError extends Error {
+  constructor(message, { status, url } = {}) {
+    super(message);
+    this.name = "SemakPageError";
+    this.status = status || null;
+    this.url = url || null;
+  }
+}
+
+export class SemakProductGoneError extends SemakPageError {
+  constructor(message, opts = {}) {
+    super(message, opts);
+    this.name = "SemakProductGoneError";
+    this.gone = true;
+  }
+}
+
+export function isSemakPageError(error) {
+  return (
+    error instanceof SemakPageError ||
+    error?.name === "SemakPageError" ||
+    error?.name === "SemakProductGoneError" ||
+    /Semak (ürün )?sayfas/i.test(error?.message || "")
+  );
+}
+
+export function isSemakProductGoneError(error) {
+  return (
+    error instanceof SemakProductGoneError ||
+    error?.name === "SemakProductGoneError" ||
+    error?.gone === true
+  );
+}
+
+function isSemakHomeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)semak\.com\.tr$/i.test(parsed.hostname)) return false;
+    const path = (parsed.pathname || "/").replace(/\/+$/, "") || "/";
+    return path === "/";
+  } catch {
+    return false;
+  }
+}
+
+function isSemakErrorHtml(html) {
+  if (!html) return false;
+  const hasErrorBanner = /Hata 500|Bir Hata Oluştu!/i.test(html);
+  const hasProduct = /product-detail-holder/i.test(html);
+  return hasErrorBanner && !hasProduct;
+}
+
+function looksLikeSemakHomepage(html) {
+  if (!html || /product-detail-holder/i.test(html)) return false;
+  if (isSemakErrorHtml(html)) return false;
+  return /Haberler/i.test(html) && /Kategoriler/i.test(html);
+}
 
 export function parseTotalPages(html) {
   const $ = cheerio.load(html);
@@ -65,20 +127,42 @@ export function parseProducts(html, sourcePage) {
   return products;
 }
 
-async function fetchHtml(url) {
+async function fetchHtml(url, { expectProduct = false } = {}) {
   const response = await fetch(url, {
     headers: {
       "User-Agent": USER_AGENT,
       Accept: "text/html,application/xhtml+xml",
     },
     cache: "no-store",
+    redirect: "follow",
   });
 
-  if (!response.ok) {
-    throw new Error(`Semak sayfası alınamadı (${response.status})`);
+  const html = await response.text();
+  const finalUrl = response.url || url;
+
+  if (expectProduct) {
+    const redirectedHome =
+      isSemakHomeUrl(finalUrl) && !isSemakHomeUrl(url);
+    const homepageHtml = looksLikeSemakHomepage(html);
+
+    if (redirectedHome || (homepageHtml && !/product-detail-holder/i.test(html))) {
+      throw new SemakProductGoneError(
+        "Semak ürün sayfası yok, ana sayfaya yönlendirildi",
+        { status: response.status, url: finalUrl },
+      );
+    }
   }
 
-  return response.text();
+  if (!response.ok || isSemakErrorHtml(html)) {
+    throw new SemakPageError(
+      isSemakErrorHtml(html)
+        ? `Semak ürün sayfası site hatası (${response.status})`
+        : `Semak sayfası alınamadı (${response.status})`,
+      { status: response.status, url: finalUrl },
+    );
+  }
+
+  return html;
 }
 
 export async function fetchSemakListPage(page = 1) {
@@ -90,7 +174,7 @@ export async function fetchSemakDetailPage(productUrl) {
     throw new Error("Ürün URL'si gerekli");
   }
 
-  return fetchHtml(productUrl);
+  return fetchHtml(productUrl, { expectProduct: true });
 }
 
 function normalizeJsonLdNodes(data) {
@@ -174,6 +258,24 @@ export function parseProductDescription(html) {
   };
 }
 
+export function parseProductBreadcrumb(html) {
+  const $ = cheerio.load(html);
+  const items = [];
+
+  $("nav[aria-label='breadcrumb'] ol.breadcrumb li.breadcrumb-item").each(
+    (_, el) => {
+      const text = cleanCategoryLabel($(el).text());
+      if (text) items.push(text);
+    },
+  );
+
+  return items;
+}
+
+export function parseProductCategory(html) {
+  return resolveCategoryFromBreadcrumb(parseProductBreadcrumb(html));
+}
+
 export function parseProductSpecifications(html) {
   const $ = cheerio.load(html);
   const specs = [];
@@ -205,6 +307,7 @@ export async function fetchProductDetails(productUrl) {
   const html = await fetchSemakDetailPage(productUrl);
   const offer = parseProductOfferFromJsonLd(html);
   const description = parseProductDescription(html);
+  const category = parseProductCategory(html);
 
   let specifications = [];
   try {
@@ -219,7 +322,14 @@ export async function fetchProductDetails(productUrl) {
     description_html: description.description_html,
     description_text: description.description_text,
     specifications,
+    breadcrumb: category.crumbs,
+    category,
   };
+}
+
+export async function fetchProductCategory(productUrl) {
+  const html = await fetchSemakDetailPage(productUrl);
+  return parseProductCategory(html);
 }
 
 export async function fetchProductOffer(productUrl) {

@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { fetchProductDetails } from "@/lib/semak/scrape";
+import { ensureProductCategory } from "@/lib/categories/ensure";
+import {
+  buildPriceUpdateFields,
+  didPriceChange,
+} from "@/lib/pricing/price-change";
+import { fetchProductDetails, isSemakProductGoneError } from "@/lib/semak/scrape";
+import { goneProductFields } from "@/lib/semak/gone-product";
 
 const BATCH_SIZE = 5;
 
@@ -80,7 +86,7 @@ export async function POST(request) {
 
     let query = supabase
       .from("products")
-      .select("id, smk_code, product_url, name")
+      .select("id, smk_code, product_url, name, price")
       .not("product_url", "is", null)
       .order("smk_code", { ascending: true })
       .limit(limit);
@@ -102,6 +108,7 @@ export async function POST(request) {
         mode,
         processed: 0,
         updated: 0,
+        changed: 0,
         failed: 0,
         done: true,
         nextOffset: offset,
@@ -113,11 +120,26 @@ export async function POST(request) {
     const results = [];
     const errors = [];
     let updated = 0;
+    let changed = 0;
 
     for (const product of products) {
       try {
         const details = await fetchProductDetails(product.product_url);
         const now = new Date().toISOString();
+        const categoryFields = {};
+        try {
+          const category = await ensureProductCategory(
+            supabase,
+            details.category,
+          );
+          categoryFields.category_synced_at = now;
+          if (category?.id) categoryFields.category_id = category.id;
+        } catch (categoryError) {
+          console.log("[semak:prices] kategori atlandı", {
+            smk_code: product.smk_code,
+            error: categoryError.message,
+          });
+        }
 
         if (!details.offer) {
           const { error: markError } = await supabase
@@ -128,6 +150,7 @@ export async function POST(request) {
               details_synced_at: now,
               price_synced_at: now,
               updated_at: now,
+              ...categoryFields,
             })
             .eq("id", product.id);
 
@@ -139,21 +162,22 @@ export async function POST(request) {
             id: product.id,
             smk_code: product.smk_code,
             updated: false,
+            changed: false,
           });
           await sleep(120);
           continue;
         }
 
+        const priceChanged = didPriceChange(product, details.offer);
         const { error: updateError } = await supabase
           .from("products")
           .update({
-            price: details.offer.price,
-            currency: details.offer.currency || "TRY",
-            price_synced_at: now,
+            ...buildPriceUpdateFields(product, details.offer, now),
             description: details.description_html || details.description_text,
             specifications: details.specifications,
             details_synced_at: now,
             updated_at: now,
+            ...categoryFields,
           })
           .eq("id", product.id);
 
@@ -166,18 +190,29 @@ export async function POST(request) {
             id: product.id,
             smk_code: product.smk_code,
             updated: false,
+            changed: false,
           });
         } else {
           updated += 1;
+          if (priceChanged) changed += 1;
           results.push({
             id: product.id,
             smk_code: product.smk_code,
             price: details.offer.price,
             currency: details.offer.currency,
             updated: true,
+            changed: priceChanged,
           });
         }
       } catch (error) {
+        if (isSemakProductGoneError(error)) {
+          const now = new Date().toISOString();
+          await supabase
+            .from("products")
+            .update(goneProductFields(now))
+            .eq("id", product.id);
+        }
+
         errors.push({
           smk_code: product.smk_code,
           error: error.message || "Detay sayfası okunamadı",
@@ -186,6 +221,7 @@ export async function POST(request) {
           id: product.id,
           smk_code: product.smk_code,
           updated: false,
+          changed: false,
         });
       }
 
@@ -209,6 +245,7 @@ export async function POST(request) {
       mode,
       processed: products.length,
       updated,
+      changed,
       failed: errors.length,
       pending: pending || 0,
       nextOffset,

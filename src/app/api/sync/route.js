@@ -49,6 +49,71 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
+
+    if (body?.action === "deactivateMissing") {
+      const smkCodes = Array.from(
+        new Set(
+          (Array.isArray(body.smkCodes) ? body.smkCodes : [])
+            .map((code) => String(code || "").trim())
+            .filter(Boolean),
+        ),
+      );
+
+      const { count: total } = await supabase
+        .from("products")
+        .select("id", { count: "exact", head: true });
+
+      const minRequired = Math.max(20, Math.floor((total || 0) * 0.5));
+      if (smkCodes.length < minRequired) {
+        return NextResponse.json({
+          deactivated: 0,
+          skipped: true,
+          reason: `Liste eksik göründüğü için pasife alma atlandı (${smkCodes.length}/${minRequired})`,
+        });
+      }
+
+      const { data: activeRows, error: listError } = await supabase
+        .from("products")
+        .select("id, smk_code")
+        .eq("is_active", true);
+
+      if (listError) {
+        return NextResponse.json({ error: listError.message }, { status: 500 });
+      }
+
+      const seen = new Set(smkCodes);
+      const missing = (activeRows || []).filter((row) => !seen.has(row.smk_code));
+      const now = new Date().toISOString();
+      let deactivated = 0;
+
+      for (let i = 0; i < missing.length; i += 80) {
+        const chunk = missing.slice(i, i + 80).map((row) => row.id);
+        const { error: updateError } = await supabase
+          .from("products")
+          .update({
+            is_active: false,
+            updated_at: now,
+          })
+          .in("id", chunk);
+
+        if (updateError) {
+          return NextResponse.json(
+            { error: updateError.message, deactivated },
+            { status: 500 },
+          );
+        }
+
+        deactivated += chunk.length;
+      }
+
+      return NextResponse.json({
+        deactivated,
+        skipped: false,
+        checked: activeRows?.length || 0,
+        listed: smkCodes.length,
+      });
+    }
+
     const page = Number(body?.page);
 
     if (!Number.isInteger(page) || page < 1) {
